@@ -9,26 +9,40 @@
 #define OVERLAY_FILE "/tmp/overlay"
 #define PATTERN_SIZE_W 800  // Size of the square pattern
 #define PATTERN_SIZE_H 600  // Size of the square pattern
-#define UPDATE_INTERVAL 10000 // Update interval in microseconds
+#define UPDATE_INTERVAL 20000 // Update interval in microseconds
 
-// Global variables to track color and opacity changes
-static unsigned char red = 0;
-static unsigned char alpha = 0;
+// Global variables to track the position and color of the box
+static int box_x = 0;
+static int box_y = 0;
+static int box_width = 100; // Width of the box
+static int box_height = 100; // Height of the box
+static unsigned char box_red = 0;
+static unsigned char box_green = 0;
+static unsigned char box_blue = 0;
 
 void draw_pattern(unsigned char *data, int width, int height) {
-    for (int y = 0; y < height; ++y) {
-        for (int x = 0; x < width; ++x) {
+    // Clear the buffer (set it to transparent or a background color)
+    memset(data, 0, width * height * 4);
+
+    // Update the position of the box
+    box_x = (box_x + 1) % (width - box_width);
+    box_y = (box_y + 1) % (height - box_height);
+
+    // Update the color of the box
+    box_red = (box_red + 1) % 256;
+    box_green = (box_green + 2) % 256;
+    box_blue = (box_blue + 3) % 256;
+
+    // Draw the box
+    for (int y = box_y; y < box_y + box_height; ++y) {
+        for (int x = box_x; x < box_x + box_width; ++x) {
             int index = (y * width + x) * 4;
-            data[index] = red;       // Red channel
-            data[index + 1] = 0;     // Green channel
-            data[index + 2] = 0;     // Blue channel
-            data[index + 3] = alpha; // Alpha channel
+            data[index] = box_red;     // Red channel
+            data[index + 1] = box_green; // Green channel
+            data[index + 2] = box_blue;  // Blue channel
+            data[index + 3] = 225;      // Alpha channel
         }
     }
-
-    // Update color and opacity for next iteration
-    red = (red + 1) % 256;
-    alpha = (alpha + 1) % 256;
 }
 
 int main() {
@@ -71,14 +85,14 @@ int main() {
     }
 
     while (1) {
-        // Draw the pattern
-        draw_pattern(data, PATTERN_SIZE_W, PATTERN_SIZE_H);
-
         if (flock(fd, LOCK_EX) == -1) {
             perror("Error loking file");
             close(fd);
             return EXIT_FAILURE;
         }
+
+        // Draw the pattern
+        draw_pattern(data, PATTERN_SIZE_W, PATTERN_SIZE_H);
 
         // Synchronize the memory with the file system
         if (msync(data, length, MS_SYNC) == -1) {

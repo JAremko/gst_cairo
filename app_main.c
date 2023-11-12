@@ -139,6 +139,8 @@ static GstElement *setup_gst_pipeline(CairoOverlayState *overlay_state) {
 
 static void map_overlay_file(CairoOverlayState *state, const char *filename) {
     struct stat sb;
+    int retries = 0;
+    const useconds_t retry_delay = 100000; // Retry every 100 milliseconds
 
     state->mapped_overlay.fd = open(filename, O_RDONLY);
     if (state->mapped_overlay.fd == -1) {
@@ -146,24 +148,14 @@ static void map_overlay_file(CairoOverlayState *state, const char *filename) {
         exit(1);
     }
 
-    if (flock(state->mapped_overlay.fd, LOCK_EX) == -1) {
-        perror("Error locking file");
-        close(state->mapped_overlay.fd);
-        exit(1);
-    }
-
-    if (fstat(state->mapped_overlay.fd, &sb) == -1) {
-        perror("Error getting file size");
-        flock(state->mapped_overlay.fd, LOCK_UN);
-        close(state->mapped_overlay.fd);
-        exit(1);
+    while (fstat(state->mapped_overlay.fd, &sb) == -1 || sb.st_size == 0) {
+        usleep(retry_delay); // Wait for half a second before retrying
     }
 
     state->mapped_overlay.size = sb.st_size;
     state->mapped_overlay.data = mmap(NULL, sb.st_size, PROT_READ, MAP_SHARED, state->mapped_overlay.fd, 0);
     if (state->mapped_overlay.data == MAP_FAILED) {
         perror("Error mmapping the file");
-        flock(state->mapped_overlay.fd, LOCK_UN);
         close(state->mapped_overlay.fd);
         exit(1);
     }
@@ -171,8 +163,6 @@ static void map_overlay_file(CairoOverlayState *state, const char *filename) {
     msync(state->mapped_overlay.data, state->mapped_overlay.size, MS_SYNC);
 
     state->mapped_overlay.is_mapped = TRUE;
-
-    flock(state->mapped_overlay.fd, LOCK_UN);
 }
 
 static void unmap_overlay_file(CairoOverlayState *state) {
