@@ -60,6 +60,7 @@ typedef struct {
     GstVideoInfo vinfo;
     cairo_surface_t *overlay_surface;
     MappedOverlayFile mapped_overlay;
+    cairo_surface_t *surface;
 
 } CairoOverlayState;
 
@@ -75,21 +76,19 @@ static void prepare_overlay(GstElement *overlay, GstCaps *caps, gpointer user_da
 
 static void draw_overlay(GstElement *overlay, cairo_t *cr, guint64 timestamp, guint64 duration, gpointer user_data) {
     CairoOverlayState *s = (CairoOverlayState *)user_data;
-    int width, height;
 
-    if (!s->valid)
+    if (!s->valid || s->surface == NULL)
         return;
 
     copy_overlay_data(s);
 
-    width = GST_VIDEO_INFO_WIDTH(&s->vinfo);
-    height = GST_VIDEO_INFO_HEIGHT(&s->vinfo);
+    // Update the existing surface's data
+    unsigned char *surface_data = cairo_image_surface_get_data(s->surface);
+    memcpy(surface_data, buffer, BUFFER_WIDTH * BUFFER_HEIGHT * 4);
+    cairo_surface_mark_dirty(s->surface); // Tell Cairo that the surface has been modified
 
-    cairo_surface_t *image = cairo_image_surface_create_for_data(buffer, CAIRO_FORMAT_ARGB32, width, height, cairo_format_stride_for_width(CAIRO_FORMAT_ARGB32, width));
-    cairo_set_source_surface(cr, image, 0, 0);
+    cairo_set_source_surface(cr, s->surface, 0, 0);
     cairo_paint(cr);
-
-    cairo_surface_destroy(image);
 }
 
 static GstElement *setup_gst_pipeline(CairoOverlayState *overlay_state) {
@@ -110,10 +109,13 @@ static GstElement *setup_gst_pipeline(CairoOverlayState *overlay_state) {
     g_assert(cairo_overlay);
     g_assert(videoscale);
 
+    // Initialize the reusable surface
+    overlay_state->surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, BUFFER_WIDTH, BUFFER_HEIGHT);
+
     // Set the desired output size
     caps = gst_caps_new_simple("video/x-raw",
-                               "width", G_TYPE_INT, 800,
-                               "height", G_TYPE_INT, 600,
+                               "width", G_TYPE_INT, BUFFER_WIDTH,
+                               "height", G_TYPE_INT, BUFFER_HEIGHT,
                                NULL);
 
     gst_bin_add_many(GST_BIN(pipeline), source, adaptor1, cairo_overlay, videoscale, adaptor2, sink, NULL);
@@ -182,13 +184,9 @@ static void unmap_overlay_file(CairoOverlayState *state) {
     }
 }
 
+
 static void copy_overlay_data(CairoOverlayState *state) {
-
-    if (!state->mapped_overlay.is_mapped) {
-        return;
-    }
-
-    if (state->mapped_overlay.fd < 0) {
+    if (!state->mapped_overlay.is_mapped || state->mapped_overlay.fd < 0) {
         return;
     }
 
@@ -199,14 +197,14 @@ static void copy_overlay_data(CairoOverlayState *state) {
     }
 
     // Ensure the data is synchronized
-    msync(state->mapped_overlay.data, state->mapped_overlay.size, MS_SYNC);
+    msync(state->mapped_overlay.data, BUFFER_WIDTH * BUFFER_HEIGHT * 4, MS_SYNC);
 
-    memcpy(buffer, state->mapped_overlay.data, state->mapped_overlay.size);
+    // Copying data with fixed size
+    memcpy(buffer, state->mapped_overlay.data, BUFFER_WIDTH * BUFFER_HEIGHT * 4);
 
     // Unlock the file
     flock(state->mapped_overlay.fd, LOCK_UN);
 }
-
 
 
 int main(int argc, char **argv) {
@@ -220,6 +218,9 @@ int main(int argc, char **argv) {
 
     overlay_state = g_new0(CairoOverlayState, 1);
     map_overlay_file(overlay_state, OVERLAY_FILE);
+
+    // Initialize the surface
+    overlay_state->surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, BUFFER_WIDTH, BUFFER_HEIGHT);
 
     // Check if mapping was successful
     if (!overlay_state->mapped_overlay.is_mapped) {
@@ -240,6 +241,10 @@ int main(int argc, char **argv) {
 
     gst_element_set_state(pipeline, GST_STATE_NULL);
     gst_object_unref(pipeline);
+
+    if (overlay_state->surface != NULL) {
+        cairo_surface_destroy(overlay_state->surface);
+    }
 
     unmap_overlay_file(overlay_state);
 
