@@ -13,7 +13,7 @@
 #define OVERLAY_FILE "/tmp/overlay"
 #define BUFFER_WIDTH 800
 #define BUFFER_HEIGHT 600
-static unsigned char buffer[BUFFER_WIDTH * BUFFER_HEIGHT * 4] = {0}; // Assuming ARGB32 format
+static unsigned char buffer[BUFFER_WIDTH * BUFFER_HEIGHT * 4] = {0};
 
 
 static gboolean on_message(GstBus *bus, GstMessage *message, gpointer user_data) {
@@ -183,27 +183,26 @@ static void unmap_overlay_file(CairoOverlayState *state) {
 }
 
 static void copy_overlay_data(CairoOverlayState *state) {
-        printf("copy! 0\n");
+
     if (!state->mapped_overlay.is_mapped) {
         return;
     }
-           printf("copy! 1\n");
+
     if (state->mapped_overlay.fd < 0) {
         return;
     }
-        printf("copy! 2\n");
+
     // Lock the file for reading
     if (flock(state->mapped_overlay.fd, LOCK_EX) == -1) {
         perror("Error locking file");
         return;
     }
-        printf("copy! 3\n");
+
     // Ensure the data is synchronized
     msync(state->mapped_overlay.data, state->mapped_overlay.size, MS_SYNC);
-        printf("copy! 4\n");
+
     memcpy(buffer, state->mapped_overlay.data, state->mapped_overlay.size);
 
-    printf("copy!\n");
     // Unlock the file
     flock(state->mapped_overlay.fd, LOCK_UN);
 }

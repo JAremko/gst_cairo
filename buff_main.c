@@ -94,7 +94,7 @@ int main() {
             return EXIT_FAILURE;
         }
 
-        printf("Iteration!\n");
+        //printf("Iteration!\n");
 
         usleep(UPDATE_INTERVAL); // Wait for a while before the next update
     }
