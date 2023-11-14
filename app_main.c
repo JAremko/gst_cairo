@@ -12,9 +12,9 @@
 
 #define OVERLAY_FILE "/tmp/overlay"
 
-#define BUFFER_WIDTH 800
+#define BUFFER_WIDTH 300
 
-#define BUFFER_HEIGHT 600
+#define BUFFER_HEIGHT 250
 
 // Static buffer for overlay data
 static unsigned char buffer[BUFFER_WIDTH * BUFFER_HEIGHT * 4 + 1];
@@ -119,20 +119,16 @@ static void draw_overlay(GstElement *overlay, cairo_t *cr, guint64 timestamp, gu
 static GstElement *setup_gst_pipeline(CairoOverlayState *overlay_state) {
     GstElement *pipeline;
     GstElement *cairo_overlay;
-    GstElement *source, *adaptor1, *adaptor2, *sink, *videoscale;
+    GstElement *source, *sink;
     GstCaps *caps;
 
     pipeline = gst_pipeline_new("cairo-overlay-example");
 
     source = gst_element_factory_make("videotestsrc", "source");
-    adaptor1 = gst_element_factory_make("videoconvert", "adaptor1");
     cairo_overlay = gst_element_factory_make("cairooverlay", "overlay");
-    videoscale = gst_element_factory_make("videoscale", "videoscale");
-    adaptor2 = gst_element_factory_make("videoconvert", "adaptor2");
     sink = gst_element_factory_make("ximagesink", "sink");
 
     g_assert(cairo_overlay);
-    g_assert(videoscale);
 
 
     // Set the desired output size
@@ -141,16 +137,11 @@ static GstElement *setup_gst_pipeline(CairoOverlayState *overlay_state) {
                                "height", G_TYPE_INT, BUFFER_HEIGHT,
                                NULL);
 
-    gst_bin_add_many(GST_BIN(pipeline), source, adaptor1, cairo_overlay, videoscale, adaptor2, sink, NULL);
+    gst_bin_add_many(GST_BIN(pipeline), source, cairo_overlay, sink, NULL);
 
-    if (!gst_element_link_many(source, adaptor1, cairo_overlay, adaptor2, videoscale, NULL)) {
+    if (!gst_element_link_many(source, cairo_overlay, sink)) {
         g_warning("Failed to link elements up to videoscale!");
     }
-
-    if (!gst_element_link_filtered(videoscale, sink, caps)) {
-        g_warning("Failed to link videoscale to sink!");
-    }
-
     gst_caps_unref(caps);
 
     // Connect signals for cairooverlay

@@ -7,8 +7,8 @@
 #include <sys/mman.h>
 
 #define OVERLAY_FILE "/tmp/overlay"
-#define PATTERN_SIZE_W 800  // Size of the square pattern
-#define PATTERN_SIZE_H 600  // Size of the square pattern
+#define PATTERN_SIZE_W 300  // Size of the square pattern
+#define PATTERN_SIZE_H 250  // Size of the square pattern
 #define UPDATE_INTERVAL 40000 // Update interval in microseconds
 
 // Global variables to track the position and color of the box
