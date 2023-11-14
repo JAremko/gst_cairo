@@ -16,7 +16,8 @@
 
 #define BUFFER_HEIGHT 600
 
-static unsigned char buffer[BUFFER_WIDTH * BUFFER_HEIGHT * 4] = {0};
+// Static buffer for overlay data
+static unsigned char buffer[BUFFER_WIDTH * BUFFER_HEIGHT * 4 + 1];
 
 
 static gboolean on_message(GstBus *bus, GstMessage *message, gpointer user_data) {
@@ -73,8 +74,6 @@ static void map_overlay_file(CairoOverlayState *state, const char *filename);
 
 static void unmap_overlay_file(CairoOverlayState *state);
 
-static void copy_overlay_data(CairoOverlayState *state);
-
 
 static void prepare_overlay(GstElement *overlay, GstCaps *caps, gpointer user_data) {
     CairoOverlayState *state = (CairoOverlayState *)user_data;
@@ -88,13 +87,30 @@ static void draw_overlay(GstElement *overlay, cairo_t *cr, guint64 timestamp, gu
     if (!s->valid || s->surface == NULL)
         return;
 
-    copy_overlay_data(s);
+    // Lock the file
+    if (flock(s->mapped_overlay.fd, LOCK_EX) == -1) {
+        perror("Error locking file");
+        return;
+    }
 
-    // Update the existing surface's data
-    unsigned char *surface_data = cairo_image_surface_get_data(s->surface);
-    memcpy(surface_data, buffer, BUFFER_WIDTH * BUFFER_HEIGHT * 4);
-    cairo_surface_mark_dirty(s->surface); // Tell Cairo that the surface has been modified
+    // Synchronize and check the data
+    msync(s->mapped_overlay.data, s->mapped_overlay.size, MS_SYNC);
 
+    if (s->mapped_overlay.data[0] != 0) {
+
+        // Copy the data to the local buffer
+        memcpy(buffer, s->mapped_overlay.data, s->mapped_overlay.size);
+
+        // Mark the surface as dirty and reset the flag
+        cairo_surface_mark_dirty(s->surface);
+
+        s->mapped_overlay.data[0] = 0; // Reset the dirty flag in the local buffer
+    }
+
+    // Unlock the file
+    if (flock(s->mapped_overlay.fd, LOCK_UN) == -1) {
+        perror("Error unlocking file");
+    }
     cairo_set_source_surface(cr, s->surface, 0, 0);
     cairo_paint(cr);
 }
@@ -118,8 +134,6 @@ static GstElement *setup_gst_pipeline(CairoOverlayState *overlay_state) {
     g_assert(cairo_overlay);
     g_assert(videoscale);
 
-    // Initialize the reusable surface
-    overlay_state->surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, BUFFER_WIDTH, BUFFER_HEIGHT);
 
     // Set the desired output size
     caps = gst_caps_new_simple("video/x-raw",
@@ -150,10 +164,17 @@ static GstElement *setup_gst_pipeline(CairoOverlayState *overlay_state) {
 static void map_overlay_file(CairoOverlayState *state, const char *filename) {
     struct stat sb;
 
-    state->mapped_overlay.fd = open(filename, O_RDWR);
-    if (state->mapped_overlay.fd == -1) {
-        perror("Error opening file for reading/writing");
-        exit(1);
+    while (1)
+    {
+        state->mapped_overlay.fd = open(filename, O_RDWR);
+        if (state->mapped_overlay.fd == -1) {
+            perror("Error opening file for reading/writing");
+            continue;
+        } else
+        {
+            break;
+        }
+        usleep(1000);
     }
 
     // Use fstat to get the size of the file
@@ -179,12 +200,13 @@ static void map_overlay_file(CairoOverlayState *state, const char *filename) {
         exit(1);
     }
 
-    // Optionally, you can call msync here to ensure the mapping is synchronized
-    msync(state->mapped_overlay.data, state->mapped_overlay.size, MS_SYNC);
+    int stride = cairo_format_stride_for_width (CAIRO_FORMAT_ARGB32, BUFFER_WIDTH);
+    // Create a Cairo surface directly on the mapped data (skipping the dirty flag byte)
+    state->surface =
+      cairo_image_surface_create_for_data(buffer, CAIRO_FORMAT_ARGB32, BUFFER_WIDTH, BUFFER_HEIGHT, stride);
 
     state->mapped_overlay.is_mapped = TRUE;
 }
-
 
 
 static void unmap_overlay_file(CairoOverlayState *state) {
@@ -194,34 +216,6 @@ static void unmap_overlay_file(CairoOverlayState *state) {
         close(state->mapped_overlay.fd);
         state->mapped_overlay.is_mapped = FALSE;
     }
-}
-
-
-static void copy_overlay_data(CairoOverlayState *state) {
-    if (!state->mapped_overlay.is_mapped || state->mapped_overlay.fd < 0) {
-        return;
-    }
-
-    // Lock the file for reading
-    if (flock(state->mapped_overlay.fd, LOCK_EX) == -1) {
-        perror("Error locking file");
-        return;
-    }
-
-    // Ensure the data is synchronized
-    msync(state->mapped_overlay.data, state->mapped_overlay.size, MS_SYNC);
-
-    // Check the dirty flag
-    if (state->mapped_overlay.data[0] == 1) {
-        // Copying data starting from the second byte
-        memcpy(buffer, state->mapped_overlay.data + 1, BUFFER_WIDTH * BUFFER_HEIGHT * 4);
-
-        // Reset the dirty flag
-        state->mapped_overlay.data[0] = 0;
-    }
-
-    // Unlock the file
-    flock(state->mapped_overlay.fd, LOCK_UN);
 }
 
 
@@ -236,9 +230,6 @@ int main(int argc, char **argv) {
 
     overlay_state = g_new0(CairoOverlayState, 1);
     map_overlay_file(overlay_state, OVERLAY_FILE);
-
-    // Initialize the surface
-    overlay_state->surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, BUFFER_WIDTH, BUFFER_HEIGHT);
 
     // Check if mapping was successful
     if (!overlay_state->mapped_overlay.is_mapped) {

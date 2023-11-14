@@ -9,7 +9,7 @@
 #define OVERLAY_FILE "/tmp/overlay"
 #define PATTERN_SIZE_W 800  // Size of the square pattern
 #define PATTERN_SIZE_H 600  // Size of the square pattern
-#define UPDATE_INTERVAL 20000 // Update interval in microseconds
+#define UPDATE_INTERVAL 40000 // Update interval in microseconds
 
 // Global variables to track the position and color of the box
 static int box_x = 0;
@@ -113,8 +113,6 @@ int main() {
             close(fd);
             return EXIT_FAILURE;
         }
-
-        //printf("Iteration!\n");
 
         usleep(UPDATE_INTERVAL); // Wait for a while before the next update
     }
