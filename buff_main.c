@@ -21,8 +21,12 @@ static unsigned char box_green = 0;
 static unsigned char box_blue = 0;
 
 void draw_pattern(unsigned char *data, int width, int height) {
+
+    // Offset the data pointer to skip the first byte (dirty flag)
+    unsigned char *draw_data = data + 1;
+
     // Clear the buffer (set it to transparent or a background color)
-    memset(data, 0, width * height * 4);
+    memset(draw_data, 0, width * height * 4);
 
     // Update the position of the box
     box_x = (box_x + 1) % (width - box_width);
@@ -37,18 +41,20 @@ void draw_pattern(unsigned char *data, int width, int height) {
     for (int y = box_y; y < box_y + box_height; ++y) {
         for (int x = box_x; x < box_x + box_width; ++x) {
             int index = (y * width + x) * 4;
-            data[index] = box_red;     // Red channel
-            data[index + 1] = box_green; // Green channel
-            data[index + 2] = box_blue;  // Blue channel
-            data[index + 3] = 225;      // Alpha channel
+            draw_data[index] = box_red;     // Red channel
+            draw_data[index + 1] = box_green; // Green channel
+            draw_data[index + 2] = box_blue;  // Blue channel
+            draw_data[index + 3] = 225;      // Alpha channel
         }
     }
+
+    *data = 1;
 }
 
 int main() {
     int fd;
     unsigned char *data;
-    size_t length = PATTERN_SIZE_W * PATTERN_SIZE_H * 4; // Assuming ARGB32 format
+    size_t length = 1 + PATTERN_SIZE_W * PATTERN_SIZE_H * 4; // 1 byte for the dirty flag
 
     // Open and lock the file once outside the loop
     fd = open(OVERLAY_FILE, O_RDWR | O_CREAT, 0666);

@@ -11,8 +11,11 @@
 #include <sys/file.h>
 
 #define OVERLAY_FILE "/tmp/overlay"
+
 #define BUFFER_WIDTH 800
+
 #define BUFFER_HEIGHT 600
+
 static unsigned char buffer[BUFFER_WIDTH * BUFFER_HEIGHT * 4] = {0};
 
 
@@ -55,6 +58,7 @@ typedef struct {
     gboolean is_mapped;
 } MappedOverlayFile;
 
+
 typedef struct {
     gboolean valid;
     GstVideoInfo vinfo;
@@ -66,13 +70,17 @@ typedef struct {
 
 
 static void map_overlay_file(CairoOverlayState *state, const char *filename);
+
 static void unmap_overlay_file(CairoOverlayState *state);
+
 static void copy_overlay_data(CairoOverlayState *state);
+
 
 static void prepare_overlay(GstElement *overlay, GstCaps *caps, gpointer user_data) {
     CairoOverlayState *state = (CairoOverlayState *)user_data;
     state->valid = gst_video_info_from_caps(&state->vinfo, caps);
 }
+
 
 static void draw_overlay(GstElement *overlay, cairo_t *cr, guint64 timestamp, guint64 duration, gpointer user_data) {
     CairoOverlayState *s = (CairoOverlayState *)user_data;
@@ -90,6 +98,7 @@ static void draw_overlay(GstElement *overlay, cairo_t *cr, guint64 timestamp, gu
     cairo_set_source_surface(cr, s->surface, 0, 0);
     cairo_paint(cr);
 }
+
 
 static GstElement *setup_gst_pipeline(CairoOverlayState *overlay_state) {
     GstElement *pipeline;
@@ -137,33 +146,46 @@ static GstElement *setup_gst_pipeline(CairoOverlayState *overlay_state) {
     return pipeline;
 }
 
+
 static void map_overlay_file(CairoOverlayState *state, const char *filename) {
     struct stat sb;
-    int retries = 0;
-    const useconds_t retry_delay = 100000; // Retry every 100 milliseconds
 
-    state->mapped_overlay.fd = open(filename, O_RDONLY);
+    state->mapped_overlay.fd = open(filename, O_RDWR);
     if (state->mapped_overlay.fd == -1) {
-        perror("Error opening file for reading");
+        perror("Error opening file for reading/writing");
         exit(1);
     }
 
-    while (fstat(state->mapped_overlay.fd, &sb) == -1 || sb.st_size == 0) {
-        usleep(retry_delay); // Wait for half a second before retrying
+    // Use fstat to get the size of the file
+    if (fstat(state->mapped_overlay.fd, &sb) == -1) {
+        perror("Error getting file size");
+        close(state->mapped_overlay.fd);
+        exit(1);
     }
 
+    // Ensure the file size is at least as large as our buffer plus the dirty flag
     state->mapped_overlay.size = sb.st_size;
-    state->mapped_overlay.data = mmap(NULL, sb.st_size, PROT_READ, MAP_SHARED, state->mapped_overlay.fd, 0);
+    if (state->mapped_overlay.size < (BUFFER_WIDTH * BUFFER_HEIGHT * 4 + 1)) {
+        fprintf(stderr, "File size is too small\n");
+        close(state->mapped_overlay.fd);
+        exit(1);
+    }
+
+    // Map the entire file, including the dirty flag
+    state->mapped_overlay.data = mmap(NULL, state->mapped_overlay.size, PROT_READ | PROT_WRITE, MAP_SHARED, state->mapped_overlay.fd, 0);
     if (state->mapped_overlay.data == MAP_FAILED) {
         perror("Error mmapping the file");
         close(state->mapped_overlay.fd);
         exit(1);
     }
 
+    // Optionally, you can call msync here to ensure the mapping is synchronized
     msync(state->mapped_overlay.data, state->mapped_overlay.size, MS_SYNC);
 
     state->mapped_overlay.is_mapped = TRUE;
 }
+
+
 
 static void unmap_overlay_file(CairoOverlayState *state) {
     if (state->mapped_overlay.is_mapped) {
@@ -187,10 +209,16 @@ static void copy_overlay_data(CairoOverlayState *state) {
     }
 
     // Ensure the data is synchronized
-    msync(state->mapped_overlay.data, BUFFER_WIDTH * BUFFER_HEIGHT * 4, MS_SYNC);
+    msync(state->mapped_overlay.data, state->mapped_overlay.size, MS_SYNC);
 
-    // Copying data with fixed size
-    memcpy(buffer, state->mapped_overlay.data, BUFFER_WIDTH * BUFFER_HEIGHT * 4);
+    // Check the dirty flag
+    if (state->mapped_overlay.data[0] == 1) {
+        // Copying data starting from the second byte
+        memcpy(buffer, state->mapped_overlay.data + 1, BUFFER_WIDTH * BUFFER_HEIGHT * 4);
+
+        // Reset the dirty flag
+        state->mapped_overlay.data[0] = 0;
+    }
 
     // Unlock the file
     flock(state->mapped_overlay.fd, LOCK_UN);
